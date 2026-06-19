@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "xrpl-stream-pay"
+version = "0.1.0"
+description = "Per-token streaming payments over a single XRPL payment channel — two on-ledger transactions bookend a session, every token batch settles off-ledger at signing speed."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "xrpl-stream-pay contributors" }]
+keywords = ["xrpl", "payment-channel", "streaming", "micropayments", "agents", "x402"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "xrpl-py>=4.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "anyio>=4"]
+
+[project.urls]
+Homepage = "https://github.com/your-org/xrpl-stream-pay"
+Documentation = "https://github.com/your-org/xrpl-stream-pay/blob/main/docs/architecture.md"
+
+[project.scripts]
+xrpl-stream-pay = "xrpl_stream_pay.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xrpl_stream_pay"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "testnet: integration tests that hit the live XRPL testnet (slow, networked; opt in with -m testnet)",
+]
+filterwarnings = [
+    # uvicorn still imports the legacy websockets API; not our code.
+    "ignore::DeprecationWarning:websockets",
+    "ignore::DeprecationWarning:uvicorn",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

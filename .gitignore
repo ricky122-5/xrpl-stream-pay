@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# venv
+.venv/
+venv/
+
+# demo state (throwaway testnet seeds — never commit)
+.demo_wallets.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
