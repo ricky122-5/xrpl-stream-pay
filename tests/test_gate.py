@@ -124,6 +124,28 @@ def test_fault_propagates_to_sender():
     asyncio.run(go())
 
 
+def test_baseline_makes_owed_cumulative():
+    w = Wallet.create()
+    g = make_gate(w, baseline_drops=500, max_outstanding_drops=1_000)
+    assert g.paid_drops == 500  # starts already paid up to the baseline
+    assert g.owed_drops == 500  # nothing sent this session yet
+    assert g.outstanding_drops == 0
+    g.record_sent(10)  # +100 drops this session
+    assert g.owed_drops == 600
+    assert g.session_paid_drops == 0
+
+
+def test_claims_must_exceed_baseline():
+    w = Wallet.create()
+    g = make_gate(w, baseline_drops=500, max_outstanding_drops=1_000)
+    # A claim at or below the baseline is stale (already authorized last session).
+    assert g.submit_claim(authorize_claim(CHAN, 500, w.private_key, w.public_key)) is False
+    # A claim above the baseline advances payment for the new session.
+    assert g.submit_claim(authorize_claim(CHAN, 600, w.private_key, w.public_key)) is True
+    assert g.paid_drops == 600
+    assert g.session_paid_drops == 100
+
+
 def test_drain_requires_full_payment():
     w = Wallet.create()
 

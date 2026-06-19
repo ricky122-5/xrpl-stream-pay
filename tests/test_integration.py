@@ -84,6 +84,29 @@ async def test_stingy_agent_gets_cut(fake_channel, wallet):
     assert captured["gate"].paid_drops == 0
 
 
+async def test_reused_channel_accumulates_across_sessions(fake_channel, wallet):
+    # One provider (one claim store), one client (one channel), three sessions.
+    captured: dict = {}
+    config = make_config(captured)  # default MemoryClaimStore persists across sessions
+    app = create_app(make_generator(10), config)
+    client = StreamClient.from_wallet(
+        wallet, fake_channel, MeterConfig(drops_per_token=10, every_n_tokens=2, every_ms=10_000)
+    )
+    with serve(app) as url:
+        r1 = await client.run(url, "s1")
+        r2 = await client.run(url, "s2")
+        r3 = await client.run(url, "s3")
+
+    # Claims are cumulative over the channel's life: 10 tokens * 10 drops * 3.
+    assert r1.final_claim.amount_drops == 100
+    assert r2.final_claim.amount_drops == 200
+    assert r3.final_claim.amount_drops == 300
+    assert client.total_tokens == 30
+    # The provider remembers the highest claim for the channel.
+    assert config.claim_store.baseline_drops(fake_channel.channel_id) == 300
+    assert captured["gate"].baseline_drops == 200  # last session started at 200
+
+
 async def test_price_higher_than_agreed_is_rejected(fake_channel, wallet):
     captured: dict = {}
     # Provider charges 50, agent agreed to at most 10.

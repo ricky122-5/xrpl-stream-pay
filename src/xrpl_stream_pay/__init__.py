@@ -39,7 +39,8 @@ from .gate import StreamGate
 from .meter import Meter, MeterConfig
 from .network import DEVNET, TESTNET, Network, drops_to_xrp, format_drops, xrp_to_drops
 from .server import Generator, ProviderConfig, create_app
-from .settle import Receipt, settle
+from .settle import PeriodicSettler, Receipt, settle
+from .store import ClaimStore, MemoryClaimStore
 
 __version__ = "0.1.0"
 
@@ -71,6 +72,10 @@ __all__ = [
     # settle
     "settle",
     "Receipt",
+    "PeriodicSettler",
+    # store
+    "ClaimStore",
+    "MemoryClaimStore",
     # network
     "Network",
     "TESTNET",

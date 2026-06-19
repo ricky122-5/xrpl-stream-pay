@@ -16,6 +16,7 @@ from xrpl.models.transactions.payment_channel_claim import PaymentChannelClaimFl
 from xrpl.transaction import submit_and_wait
 from xrpl.wallet import Wallet
 
+from .channel import close_channel
 from .claims import Claim, verify_claim
 from .errors import PaymentError
 from .network import TESTNET, Network, format_drops
@@ -36,6 +37,11 @@ class Receipt:
         return self.network.tx_url(self.settle_tx_hash)
 
     def __str__(self) -> str:
+        if self.claimed_drops == 0 and self.closed:
+            return (
+                f"Closed channel {self.channel_id[:8]}… (remainder returned to source)"
+                f"\n  {self.explorer_url}"
+            )
         state = "closed" if self.closed else "left open"
         return (
             f"Settled {format_drops(self.claimed_drops)} on channel "
@@ -85,3 +91,81 @@ def settle(
         closed=close,
         network=network,
     )
+
+
+class PeriodicSettler:
+    """Redeem a reused channel occasionally instead of once per session.
+
+    This is where the economics pay off: keep one long-lived channel and call
+    :meth:`maybe_settle` after each session.  It only submits an on-ledger
+    ``PaymentChannelClaim`` once the unsettled amount crosses ``every_drops`` (or
+    when forced), so K sessions cost far fewer than K transactions.  Each redeem
+    leaves the channel open (``close=False``) so the next session continues on
+    top; call :meth:`final_settle` at the very end to redeem the remainder and
+    close.
+    """
+
+    def __init__(
+        self,
+        destination: Wallet,
+        *,
+        every_drops: int | None = None,
+        network: Network = TESTNET,
+        client: JsonRpcClient | None = None,
+    ) -> None:
+        self.destination = destination
+        self.every_drops = every_drops
+        self.network = network
+        self.client = client or JsonRpcClient(network.json_rpc)
+        self.settled_drops = 0
+        self.receipts: list[Receipt] = []
+
+    @property
+    def settlements(self) -> int:
+        return len(self.receipts)
+
+    def maybe_settle(self, claim: Claim | None, *, force: bool = False) -> Receipt | None:
+        """Settle if enough has accrued (or ``force``). Returns a receipt or None."""
+        if claim is None:
+            return None
+        pending = claim.amount_drops - self.settled_drops
+        if pending <= 0:
+            return None
+        if not force and self.every_drops is not None and pending < self.every_drops:
+            return None
+        receipt = settle(
+            self.destination, claim, close=False, network=self.network, client=self.client
+        )
+        self.settled_drops = claim.amount_drops
+        self.receipts.append(receipt)
+        return receipt
+
+    def final_settle(self, claim: Claim | None) -> Receipt | None:
+        """Close the channel, redeeming any remaining unsettled amount first.
+
+        Always closes (unless there were no claims at all), so the channel's
+        unspent remainder returns to the source — leaving a long-lived channel
+        open would lock those funds until its settle delay.
+        """
+        if claim is None:
+            return None
+        if claim.amount_drops > self.settled_drops:
+            # Remainder to redeem: one tx that both claims it and closes.
+            receipt = settle(
+                self.destination, claim, close=True, network=self.network, client=self.client
+            )
+            self.settled_drops = claim.amount_drops
+        else:
+            # Everything already redeemed; just close to free the remainder.
+            tx_hash = close_channel(
+                self.destination, claim.channel_id, network=self.network, client=self.client
+            )
+            receipt = Receipt(
+                channel_id=claim.channel_id,
+                claimed_drops=0,
+                settle_tx_hash=tx_hash,
+                closed=True,
+                network=self.network,
+            )
+        self.receipts.append(receipt)
+        return receipt

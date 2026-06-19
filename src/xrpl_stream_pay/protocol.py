@@ -57,8 +57,14 @@ def ready(
     stall_timeout: float,
     provider: str,
     network: str,
+    already_authorized_drops: int = 0,
 ) -> dict[str, Any]:
-    """Server accepts and states its terms."""
+    """Server accepts and states its terms.
+
+    ``already_authorized_drops`` is the cumulative amount the provider already
+    holds a claim for on this (reused) channel; a new session must keep signing
+    above it. Zero for a fresh channel.
+    """
     return {
         "type": READY,
         "drops_per_token": drops_per_token,
@@ -67,11 +73,17 @@ def ready(
         "stall_timeout": stall_timeout,
         "provider": provider,
         "network": network,
+        "already_authorized_drops": already_authorized_drops,
     }
 
 
 def chunk(*, text: str, tokens_sent: int, owed_drops: int) -> dict[str, Any]:
-    """A batch of generated text plus the running totals the client signs against."""
+    """A batch of generated text plus the running totals the client signs against.
+
+    ``tokens_sent`` counts tokens in *this session*; ``owed_drops`` is the
+    *cumulative* amount owed over the channel's life (baseline + this session),
+    which is exactly the amount the client signs into its next claim.
+    """
     return {
         "type": CHUNK,
         "text": text,

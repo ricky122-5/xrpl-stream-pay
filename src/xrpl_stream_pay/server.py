@@ -34,6 +34,7 @@ from .claims import Claim
 from .errors import PaymentError, StallTimeout
 from .gate import StreamGate
 from .network import TESTNET, Network
+from .store import ClaimStore, MemoryClaimStore
 
 # A generator turns a prompt into a stream of (text, n_tokens) batches.
 TokenStream = AsyncIterator[tuple[str, int]]
@@ -59,23 +60,33 @@ class ProviderConfig:
     """Look the channel up on-ledger to confirm it pays us, with the right key."""
     network: Network = TESTNET
     on_session_end: SessionEndHook | None = field(default=None)
+    claim_store: ClaimStore = field(default_factory=MemoryClaimStore)
+    """Remembers the highest claim per channel so channels can be *reused*
+    across sessions (claims stay cumulative over the channel's whole life)."""
 
     @property
     def max_outstanding_drops(self) -> int:
         return self.max_outstanding_tokens * self.drops_per_token
 
 
-async def _resolve_capacity(
+async def _resolve_session(
     config: ProviderConfig, channel_id: str, public_key: str
-) -> int:
-    """Confirm the channel is real, pays us, with the expected key; return capacity.
+) -> tuple[int, int]:
+    """Validate the channel and return ``(capacity_drops, baseline_drops)``.
 
-    Raises :class:`PaymentError` if the channel can't be used.  When
-    ``verify_on_chain`` is off (tests, offline demos) we trust the declared key
-    and report an effectively unbounded capacity.
+    ``baseline_drops`` is the cumulative amount already authorized on this
+    channel — the higher of what we remember (an unsettled claim) and what's
+    been redeemed on-ledger — so a reused channel keeps climbing rather than
+    re-spending the gap.  Raises :class:`PaymentError` if the channel is
+    unusable.  With ``verify_on_chain`` off we trust the declared key and report
+    an effectively unbounded capacity.
     """
+    remembered = config.claim_store.get(channel_id)
+    remembered_baseline = remembered.amount_drops if remembered else 0
+
     if not config.verify_on_chain:
-        return 2**63 - 1
+        return 2**63 - 1, remembered_baseline
+
     try:
         state = await asyncio.to_thread(
             lookup_channel, channel_id, network=config.network
@@ -88,7 +99,9 @@ async def _resolve_capacity(
         raise PaymentError("channel public key does not match the one offered")
     if state.claimable_drops <= 0:
         raise PaymentError("channel has no claimable balance left")
-    return state.amount_drops
+    # Baseline can't be below what's already been redeemed on-ledger.
+    baseline = max(remembered_baseline, state.balance_drops)
+    return state.amount_drops, baseline
 
 
 async def _read_claims(ws: WebSocket, gate: StreamGate) -> None:
@@ -124,7 +137,7 @@ async def _run_session(
     params = hello.get("params", {})
 
     try:
-        capacity = await _resolve_capacity(config, channel_id, public_key)
+        capacity, baseline = await _resolve_session(config, channel_id, public_key)
     except PaymentError as exc:
         await ws.send_json(protocol.error(str(exc)))
         return None
@@ -136,6 +149,7 @@ async def _run_session(
         capacity_drops=capacity,
         max_outstanding_drops=config.max_outstanding_drops,
         stall_timeout=config.stall_timeout,
+        baseline_drops=baseline,
     )
     await ws.send_json(
         protocol.ready(
@@ -145,6 +159,7 @@ async def _run_session(
             stall_timeout=config.stall_timeout,
             provider=config.provider_address,
             network=config.network.name,
+            already_authorized_drops=baseline,
         )
     )
 
@@ -169,6 +184,10 @@ async def _run_session(
             )
         )
         await gate.drain()
+        # Persist the final claim *before* signalling done, so a client starting
+        # its next session on this channel always sees the updated baseline.
+        if gate.latest_claim is not None:
+            config.claim_store.put(gate.latest_claim)
         await ws.send_json(
             protocol.done(
                 tokens_sent=gate.tokens_sent,
@@ -228,10 +247,15 @@ def create_app(generate: Generator, config: ProviderConfig) -> FastAPI:
         except WebSocketDisconnect:
             pass
         finally:
-            if gate is not None and config.on_session_end is not None:
-                result = config.on_session_end(gate)
-                if asyncio.iscoroutine(result):
-                    await result
+            if gate is not None:
+                # Remember the highest claim so the channel can be reused next
+                # session, and settled later, without losing what was authorized.
+                if gate.latest_claim is not None:
+                    config.claim_store.put(gate.latest_claim)
+                if config.on_session_end is not None:
+                    result = config.on_session_end(gate)
+                    if asyncio.iscoroutine(result):
+                        await result
             with contextlib.suppress(Exception):
                 await ws.close()
 

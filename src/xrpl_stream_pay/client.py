@@ -59,11 +59,14 @@ class StreamClient:
             if max_budget_drops is not None
             else channel.capacity_drops
         )
-        # Filled in over a session.
+        # Filled in over a session; persists across stream() calls when the
+        # same client (i.e. the same channel) is reused for many sessions.
         self.final_claim: Claim | None = None
         self.claims_sent = 0
-        self.tokens_received = 0
-        self._last_authorized = 0
+        self.tokens_received = 0  # tokens in the most recent session
+        self.total_tokens = 0  # tokens over the channel's whole life
+        self._last_authorized = 0  # cumulative drops authorized so far
+        self._baseline = 0  # cumulative already authorized when a session starts
 
     @classmethod
     def from_wallet(
@@ -124,6 +127,9 @@ class StreamClient:
             )
             ready = json.loads(await ws.recv())
             self._check_ready(ready)
+            # Continue from wherever this (possibly reused) channel left off.
+            self._baseline = int(ready.get("already_authorized_drops", 0))
+            self._last_authorized = max(self._last_authorized, self._baseline)
 
             async for text in self._consume(ws, meter):
                 yield text
@@ -139,11 +145,12 @@ class StreamClient:
 
             if kind == protocol.CHUNK:
                 self._guard_price(msg)
-                # The provider reports a cumulative count; meter wants the delta.
-                delta = msg["tokens_sent"] - prev_tokens
+                # tokens_sent is cumulative for the session; meter wants the delta.
+                delta = max(0, msg["tokens_sent"] - prev_tokens)
                 prev_tokens = msg["tokens_sent"]
-                meter.record(max(0, delta))
+                meter.record(delta)
                 self.tokens_received = msg["tokens_sent"]
+                self.total_tokens += delta
                 if meter.fired():
                     await self._send_claim(ws, msg["owed_drops"])
                 yield msg["text"]
@@ -187,11 +194,13 @@ class StreamClient:
             )
 
     def _guard_price(self, chunk: dict) -> None:
-        expected = chunk["tokens_sent"] * self.meter_config.drops_per_token
+        # owed is cumulative over the channel; subtract the session baseline.
+        expected = self._baseline + chunk["tokens_sent"] * self.meter_config.drops_per_token
         if chunk["owed_drops"] > expected:
             raise BudgetExceeded(
                 f"provider billed {chunk['owed_drops']} drops for "
-                f"{chunk['tokens_sent']} tokens; agreed price implies {expected}"
+                f"{chunk['tokens_sent']} tokens above a {self._baseline}-drop baseline; "
+                f"agreed price implies at most {expected}"
             )
 
     @property

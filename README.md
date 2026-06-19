@@ -51,6 +51,31 @@ You'll watch the running tally tick up live (tokens, drops authorized, channel
 remaining, claims/sec), then see the single settlement transaction with an
 explorer link. Add `--stingy` to watch a non-paying agent get cut off mid-stream.
 
+## Reused channel across many sessions (the economic win)
+
+A single short request is fine to settle per-call, but the real payoff is a
+**long-lived channel** between an agent and a provider it talks to repeatedly.
+Claims are cumulative over the channel's whole life, so you open once, run many
+sessions, redeem on-ledger only occasionally, and close once:
+
+```bash
+python examples/reuse_demo.py --network devnet --sessions 6
+```
+
+```
+session  1: +40 tok │ cumulative authorized 0.040000 XRP │ (off-ledger only)
+session  2: +40 tok │ cumulative authorized 0.080000 XRP │ ⚖ settled → 9DBD06BB53…
+ ...
+on-ledger transactions .. 4  (1 open + 2 redeems + 1 close)
+vs open+settle each time  10
+amortization ............ 2.5x fewer on-ledger txns
+```
+
+K sessions cost `1 + redeems + 1` transactions instead of `2K`, and the ratio
+only improves with more sessions (50 sessions settling every 10 ≈ 7 txns vs 100).
+The provider remembers the highest claim per channel (`ClaimStore`) and
+`PeriodicSettler` decides when enough has accrued to redeem.
+
 ## Real streaming model (optional)
 
 ```bash
@@ -72,8 +97,9 @@ instead of a generator — so you're paying, per token, for real output.
 | [`meter.py`](src/xrpl_stream_pay/meter.py) | The claim ticker: a new claim is due every *N* tokens or every *M* ms, whichever trips first. |
 | [`gate.py`](src/xrpl_stream_pay/gate.py) | Provider policy, transport-free: track owed vs paid, apply backpressure, raise `StallTimeout` when claims lapse. |
 | [`server.py`](src/xrpl_stream_pay/server.py) | FastAPI websocket provider that withholds the next chunk until a fresh valid claim arrives. |
-| [`client.py`](src/xrpl_stream_pay/client.py) | Agent session: open the channel, stream the response, sign a claim each time the meter fires. |
-| [`settle.py`](src/xrpl_stream_pay/settle.py) | Redeem the final claim in one `PaymentChannelClaim`; return a receipt with an explorer link. |
+| [`client.py`](src/xrpl_stream_pay/client.py) | Agent session: open the channel, stream the response, sign a claim each time the meter fires. Reuse one instance across sessions to reuse the channel. |
+| [`store.py`](src/xrpl_stream_pay/store.py) | Provider's `ClaimStore`: remembers the highest claim per channel so a channel can be reused across sessions (claims stay cumulative over its whole life). |
+| [`settle.py`](src/xrpl_stream_pay/settle.py) | Redeem the final claim in one `PaymentChannelClaim`; `PeriodicSettler` redeems a reused channel occasionally instead of per session. |
 
 (The spec's `claims.py` "wraps `channel_authorize`/`channel_verify`" — we do the
 same cryptography *locally* instead of via RPC, because `channel_authorize` is
@@ -111,7 +137,7 @@ print(receipt)        # -> "Settled 0.00xyz XRP ... https://testnet.xrpl.org/tra
 ## Tests
 
 ```bash
-pytest                  # fast, offline: claims, meter, gate, client/server over an in-memory socket
+pytest                  # fast, offline: claims, meter, gate, store, client/server + channel reuse over a local socket
 pytest -m testnet       # opt-in: real channel open → stream → settle round trip on testnet (slow)
 ```
 

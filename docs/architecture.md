@@ -96,10 +96,6 @@ a cut.
 - **Bidirectional channels.** XRPL channels are one-way. Refunds/credits would
   need a second channel or a different primitive.
 - **Provider discovery / routing.** One agent, one provider, one channel.
-- **Channel reuse across sessions.** Each demo run opens a fresh channel. A real
-  deployment would keep a long-lived channel per (agent, provider) pair and only
-  settle periodically — amortizing the two on-ledger transactions over *many*
-  sessions, which is where the economics get genuinely good.
 - **Mainnet / a production facilitator.** Testnet/devnet only.
 - **A watchtower.** With a non-trivial `settle_delay`, a channel can be closed
   unilaterally; a production system wants something watching for that.
@@ -143,14 +139,23 @@ a cut.
 
 High-frequency, fine-grained, repeated billing between the *same two parties*:
 an agent that hammers one provider thousands of times, paying per token, over a
-long-lived channel it opens once a day and settles once a day. That's two
-on-ledger transactions for a day's worth of traffic. That is the niche, and it's
-a real one for autonomous agents.
+long-lived channel it opens once a day and settles once a day. That's a handful
+of on-ledger transactions for a day's worth of traffic. That is the niche, and
+it's a real one for autonomous agents.
+
+This is implemented (see `examples/reuse_demo.py`): claims are cumulative over a
+channel's whole life, the provider remembers the highest claim per channel
+(`ClaimStore`), and `PeriodicSettler` redeems only when enough has accrued. A
+6-session run settles 3 times instead of 6 — and the ratio improves with volume.
+The remaining gap to "open once a day" is *persisting* the channel + claim store
+across process restarts (the in-memory store is demo-grade) and `PaymentChannelFund`
+top-ups when a long-lived channel runs low (the call is wired up in `channel.py`).
 
 ## Where it goes next
 
-1. **Long-lived, reused channels** with periodic settlement (the real economic
-   win) and `PaymentChannelFund` top-ups mid-life — funding is already wired up.
+1. **Persist the channel + claim store** across restarts (Redis/Postgres behind
+   the `ClaimStore` interface) and auto-`PaymentChannelFund` a long-lived channel
+   when it runs low, so a single channel can genuinely live for days.
 2. **RLUSD / IOU denomination** so prices are stable in USD terms.
 3. **A facilitator** that brokers (agent ↔ provider) channels and handles
    discovery, so an agent doesn't manage channels by hand.

@@ -42,20 +42,26 @@ class StreamGate:
         capacity_drops: int,
         max_outstanding_drops: int,
         stall_timeout: float = 10.0,
+        baseline_drops: int = 0,
     ) -> None:
         if drops_per_token < 0:
             raise ValueError("drops_per_token must be >= 0")
         if max_outstanding_drops < 0:
             raise ValueError("max_outstanding_drops must be >= 0")
+        if baseline_drops < 0:
+            raise ValueError("baseline_drops must be >= 0")
         self.channel_id = channel_id
         self.public_key = public_key
         self.drops_per_token = drops_per_token
         self.capacity_drops = capacity_drops
         self.max_outstanding_drops = max_outstanding_drops
         self.stall_timeout = stall_timeout
+        # Cumulative drops already authorized on this channel before this
+        # session (highest prior claim). Claims must keep climbing above it.
+        self.baseline_drops = baseline_drops
 
         self.tokens_sent = 0
-        self.paid_drops = 0
+        self.paid_drops = baseline_drops
         self.latest_claim: Claim | None = None
         self.claims_accepted = 0
         # A terminal fault raised asynchronously (bad claim / disconnect) by the
@@ -69,7 +75,13 @@ class StreamGate:
 
     @property
     def owed_drops(self) -> int:
-        return self.tokens_sent * self.drops_per_token
+        """Cumulative drops owed over the channel's life (baseline + this session)."""
+        return self.baseline_drops + self.tokens_sent * self.drops_per_token
+
+    @property
+    def session_paid_drops(self) -> int:
+        """Drops paid for *this session* (excludes the carried-over baseline)."""
+        return self.paid_drops - self.baseline_drops
 
     @property
     def outstanding_drops(self) -> int:
