@@ -147,15 +147,20 @@ This is implemented (see `examples/reuse_demo.py`): claims are cumulative over a
 channel's whole life, the provider remembers the highest claim per channel
 (`ClaimStore`), and `PeriodicSettler` redeems only when enough has accrued. A
 6-session run settles 3 times instead of 6 — and the ratio improves with volume.
-The remaining gap to "open once a day" is *persisting* the channel + claim store
-across process restarts (the in-memory store is demo-grade) and `PaymentChannelFund`
-top-ups when a long-lived channel runs low (the call is wired up in `channel.py`).
+
+It even survives a restart (see `examples/persistent_demo.py`): the agent
+persists its channel handle (`save_channel`/`load_channel`), the provider
+persists its claims (`FileClaimStore`), and a long-lived channel tops itself up
+with `PaymentChannelFund` (`ensure_capacity`) when it runs low. Six sessions
+across *two separate process lifetimes* cost three on-ledger transactions (open,
+one top-up, one settle/close). The remaining gap to a production deployment is
+swapping the JSON files for a real datastore (Redis/Postgres) behind the same
+interfaces — the seam is already there.
 
 ## Where it goes next
 
-1. **Persist the channel + claim store** across restarts (Redis/Postgres behind
-   the `ClaimStore` interface) and auto-`PaymentChannelFund` a long-lived channel
-   when it runs low, so a single channel can genuinely live for days.
+1. **Production-grade persistence**: back `ClaimStore` with Redis/Postgres and
+   add a watchtower for unilateral channel closes.
 2. **RLUSD / IOU denomination** so prices are stable in USD terms.
 3. **A facilitator** that brokers (agent ↔ provider) channels and handles
    discovery, so an agent doesn't manage channels by hand.

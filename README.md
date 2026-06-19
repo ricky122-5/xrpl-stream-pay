@@ -76,6 +76,25 @@ only improves with more sessions (50 sessions settling every 10 ≈ 7 txns vs 10
 The provider remembers the highest claim per channel (`ClaimStore`) and
 `PeriodicSettler` decides when enough has accrued to redeem.
 
+## A channel that outlives the process
+
+Take it further: persist the agent's channel handle and the provider's claim
+store to disk, and the channel survives a restart. Run the script, kill it, run
+it again — it resumes the *same* channel with claims climbing from where they
+left off, topping itself up (`PaymentChannelFund`) when it runs low:
+
+```bash
+python examples/persistent_demo.py --network devnet           # run 1: open + 3 sessions
+python examples/persistent_demo.py --network devnet           # run 2: fresh process, resume + 3 more
+python examples/persistent_demo.py --network devnet --close   # settle once, close
+```
+
+Run 2 is a brand-new process: the agent reloads its channel via `load_channel`,
+the provider's `FileClaimStore` remembers the highest claim, and the client syncs
+to that baseline from the `ready` handshake. Six sessions across two process
+lifetimes cost **3 on-ledger transactions** (open + one auto-top-up + one
+settle/close).
+
 ## Real streaming model (optional)
 
 ```bash
@@ -92,13 +111,13 @@ instead of a generator — so you're paying, per token, for real output.
 
 | Module | Job |
 |---|---|
-| [`channel.py`](src/xrpl_stream_pay/channel.py) | Open / fund / look up / close the channel (`PaymentChannelCreate`, `PaymentChannelFund`, `PaymentChannelClaim`+`tfClose`). |
+| [`channel.py`](src/xrpl_stream_pay/channel.py) | Open / fund / look up / close the channel (`PaymentChannelCreate`, `PaymentChannelFund`, `PaymentChannelClaim`+`tfClose`); `ensure_capacity` auto-tops-up a long-lived channel, `save_channel`/`load_channel` persist it across restarts. |
 | [`claims.py`](src/xrpl_stream_pay/claims.py) | Sign & verify cumulative claims **locally** — the off-ledger equivalent of `channel_authorize` / `channel_verify`. |
 | [`meter.py`](src/xrpl_stream_pay/meter.py) | The claim ticker: a new claim is due every *N* tokens or every *M* ms, whichever trips first. |
 | [`gate.py`](src/xrpl_stream_pay/gate.py) | Provider policy, transport-free: track owed vs paid, apply backpressure, raise `StallTimeout` when claims lapse. |
 | [`server.py`](src/xrpl_stream_pay/server.py) | FastAPI websocket provider that withholds the next chunk until a fresh valid claim arrives. |
 | [`client.py`](src/xrpl_stream_pay/client.py) | Agent session: open the channel, stream the response, sign a claim each time the meter fires. Reuse one instance across sessions to reuse the channel. |
-| [`store.py`](src/xrpl_stream_pay/store.py) | Provider's `ClaimStore`: remembers the highest claim per channel so a channel can be reused across sessions (claims stay cumulative over its whole life). |
+| [`store.py`](src/xrpl_stream_pay/store.py) | Provider's `ClaimStore`: remembers the highest claim per channel so a channel can be reused across sessions. `MemoryClaimStore` for one process, `FileClaimStore` to survive a restart. |
 | [`settle.py`](src/xrpl_stream_pay/settle.py) | Redeem the final claim in one `PaymentChannelClaim`; `PeriodicSettler` redeems a reused channel occasionally instead of per session. |
 
 (The spec's `claims.py` "wraps `channel_authorize`/`channel_verify`" — we do the

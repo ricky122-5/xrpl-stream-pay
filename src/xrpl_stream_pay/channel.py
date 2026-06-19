@@ -18,7 +18,10 @@ the last claim, then close) lives in :mod:`xrpl_stream_pay.settle`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 from xrpl.clients import JsonRpcClient
 from xrpl.models.requests import LedgerEntry
@@ -32,7 +35,7 @@ from xrpl.transaction import submit_and_wait
 from xrpl.wallet import Wallet
 
 from .errors import ChannelError
-from .network import TESTNET, Network
+from .network import NETWORKS, TESTNET, Network
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,32 @@ class ChannelInfo:
     @property
     def explorer_url(self) -> str:
         return self.network.channel_url(self.channel_id)
+
+    def to_dict(self) -> dict[str, object]:
+        """JSON-serializable form (network stored by name)."""
+        return {
+            "channel_id": self.channel_id,
+            "source": self.source,
+            "destination": self.destination,
+            "public_key": self.public_key,
+            "capacity_drops": self.capacity_drops,
+            "settle_delay": self.settle_delay,
+            "open_tx_hash": self.open_tx_hash,
+            "network": self.network.name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ChannelInfo":
+        return cls(
+            channel_id=data["channel_id"],
+            source=data["source"],
+            destination=data["destination"],
+            public_key=data["public_key"],
+            capacity_drops=int(data["capacity_drops"]),
+            settle_delay=int(data["settle_delay"]),
+            open_tx_hash=data["open_tx_hash"],
+            network=NETWORKS.get(data.get("network", "testnet"), TESTNET),
+        )
 
 
 @dataclass(frozen=True)
@@ -212,3 +241,45 @@ def close_channel(
     response = submit_and_wait(tx, client, wallet)
     _require_success(response, "PaymentChannelClaim(close)")
     return response.result["hash"]
+
+
+def ensure_capacity(
+    sender: Wallet,
+    channel: ChannelInfo,
+    min_capacity_drops: int,
+    *,
+    buffer_drops: int = 0,
+    network: Network = TESTNET,
+    client: JsonRpcClient | None = None,
+) -> ChannelInfo:
+    """Top up a long-lived channel if it's about to run dry. Returns updated info.
+
+    A channel that lives across many sessions eventually approaches its capacity
+    (claims are cumulative).  Call this between sessions with the cumulative
+    amount you expect to authorize next; if the channel can't cover it, this funds
+    the shortfall (plus ``buffer_drops``) via ``PaymentChannelFund`` and returns a
+    new :class:`ChannelInfo` with the larger capacity.  A no-op when there's room.
+    """
+    if channel.capacity_drops >= min_capacity_drops:
+        return channel
+    shortfall = min_capacity_drops + buffer_drops - channel.capacity_drops
+    fund_channel(sender, channel.channel_id, shortfall, network=network, client=client)
+    return replace(channel, capacity_drops=channel.capacity_drops + shortfall)
+
+
+def save_channel(path: str | os.PathLike[str], channel: ChannelInfo) -> None:
+    """Persist a channel handle so a restarted agent can reuse the same channel."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(channel.to_dict(), indent=2))
+
+
+def load_channel(path: str | os.PathLike[str]) -> ChannelInfo | None:
+    """Load a persisted channel handle, or ``None`` if absent/unreadable."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        return ChannelInfo.from_dict(json.loads(p.read_text()))
+    except (json.JSONDecodeError, OSError, KeyError, ValueError):
+        return None

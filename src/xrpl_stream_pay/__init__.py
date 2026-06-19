@@ -21,9 +21,12 @@ from .channel import (
     ChannelInfo,
     ChannelState,
     close_channel,
+    ensure_capacity,
     fund_channel,
+    load_channel,
     lookup_channel,
     open_channel,
+    save_channel,
 )
 from .claims import Claim, authorize_claim, claim_message, verify_claim
 from .client import SessionResult, StreamClient
@@ -40,7 +43,7 @@ from .meter import Meter, MeterConfig
 from .network import DEVNET, TESTNET, Network, drops_to_xrp, format_drops, xrp_to_drops
 from .server import Generator, ProviderConfig, create_app
 from .settle import PeriodicSettler, Receipt, settle
-from .store import ClaimStore, MemoryClaimStore
+from .store import ClaimStore, FileClaimStore, MemoryClaimStore
 
 __version__ = "0.1.0"
 
@@ -53,6 +56,9 @@ __all__ = [
     "fund_channel",
     "lookup_channel",
     "close_channel",
+    "ensure_capacity",
+    "save_channel",
+    "load_channel",
     # claims
     "Claim",
     "authorize_claim",
@@ -76,6 +82,7 @@ __all__ = [
     # store
     "ClaimStore",
     "MemoryClaimStore",
+    "FileClaimStore",
     # network
     "Network",
     "TESTNET",

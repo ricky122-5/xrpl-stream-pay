@@ -11,8 +11,9 @@ dist/
 .venv/
 venv/
 
-# demo state (throwaway testnet seeds — never commit)
+# demo state (throwaway testnet seeds / channel handles — never commit)
 .demo_wallets.json
+.persist/
 
 # OS / editor
 .DS_Store
