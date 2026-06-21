@@ -95,6 +95,36 @@ to that baseline from the `ready` handshake. Six sessions across two process
 lifetimes cost **3 on-ledger transactions** (open + one auto-top-up + one
 settle/close).
 
+## Pay for HTTP requests, x402 style
+
+The same channel works behind plain HTTP, following the emerging
+[x402](https://www.x402.org) `402 Payment Required` convention — but with an XRPL
+channel claim as the payment instrument instead of a per-request stablecoin
+transfer. An unpaid request gets a `402` with terms; the client signs a
+cumulative claim and retries; the server verifies and serves. Repeated calls
+cost **zero** on-ledger transactions:
+
+```bash
+python examples/x402_demo.py --network devnet --requests 8
+```
+
+```
+request  1: HTTP 200 │ cumulative authorized 0.003000 XRP │ paywalled
+ ...
+request  8: HTTP 200 │ cumulative authorized 0.024000 XRP │ paywalled
+Total on-ledger transactions: 2 (open + settle) for 8 paid requests.
+```
+
+```python
+from xrpl_stream_pay import X402Client
+client = X402Client.from_wallet(agent, channel)
+resp = client.get("http://provider/quote?symbol=XRP")   # does the 402→pay→200 dance
+```
+
+This is the request/response analogue of the streaming gate; both share the same
+cumulative claims and `ClaimStore`, so one channel can pay for streaming *and*
+per-request traffic.
+
 ## Real streaming model (optional)
 
 ```bash
@@ -119,6 +149,7 @@ instead of a generator — so you're paying, per token, for real output.
 | [`client.py`](src/xrpl_stream_pay/client.py) | Agent session: open the channel, stream the response, sign a claim each time the meter fires. Reuse one instance across sessions to reuse the channel. |
 | [`store.py`](src/xrpl_stream_pay/store.py) | Provider's `ClaimStore`: remembers the highest claim per channel so a channel can be reused across sessions. `MemoryClaimStore` for one process, `FileClaimStore` to survive a restart. |
 | [`settle.py`](src/xrpl_stream_pay/settle.py) | Redeem the final claim in one `PaymentChannelClaim`; `PeriodicSettler` redeems a reused channel occasionally instead of per session. |
+| [`x402.py`](src/xrpl_stream_pay/x402.py) | HTTP `402 Payment Required` profile: `ChannelPaywall` gates routes on a claim, `X402Client` does the pay-and-retry — same cumulative claims, request/response instead of streaming. |
 
 (The spec's `claims.py` "wraps `channel_authorize`/`channel_verify`" — we do the
 same cryptography *locally* instead of via RPC, because `channel_authorize` is

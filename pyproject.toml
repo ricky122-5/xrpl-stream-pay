@@ -49,6 +49,8 @@ filterwarnings = [
     # uvicorn still imports the legacy websockets API; not our code.
     "ignore::DeprecationWarning:websockets",
     "ignore::DeprecationWarning:uvicorn",
+    # Starlette's TestClient warns about its own httpx usage; not our code.
+    "ignore:Using `httpx` with `starlette.testclient`:",
 ]
 
 [tool.ruff]

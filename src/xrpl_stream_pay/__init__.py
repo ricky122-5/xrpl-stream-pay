@@ -44,6 +44,7 @@ from .network import DEVNET, TESTNET, Network, drops_to_xrp, format_drops, xrp_t
 from .server import Generator, ProviderConfig, create_app
 from .settle import PeriodicSettler, Receipt, settle
 from .store import ClaimStore, FileClaimStore, MemoryClaimStore
+from .x402 import ChannelPaywall, X402Client, add_paid_route
 
 __version__ = "0.1.0"
 
@@ -83,6 +84,10 @@ __all__ = [
     "ClaimStore",
     "MemoryClaimStore",
     "FileClaimStore",
+    # x402 HTTP profile
+    "ChannelPaywall",
+    "X402Client",
+    "add_paid_route",
     # network
     "Network",
     "TESTNET",

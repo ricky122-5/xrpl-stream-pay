@@ -126,7 +126,10 @@ a cut.
   pattern (HTTP `402 Payment Required` + a stablecoin micro-payment per request,
   championed on Base) is gaining real traction for agent payments, with wallets,
   facilitators, and tooling. It's *per-request*, not *per-token*, so it's
-  complementary rather than identical — but it's where the mindshare is.
+  complementary rather than identical — but it's where the mindshare is. We meet
+  it halfway: `x402.py` is an x402 *profile* whose payment instrument is a channel
+  claim (see `examples/x402_demo.py`), so the same channel pays for streaming
+  *and* per-request HTTP, and 8 paid requests still cost 2 on-ledger transactions.
 - **Solana is cheap and fast enough that per-request on-chain is viable** for
   many workloads, sidestepping channels entirely. Channels win specifically when
   per-token granularity matters and volume is high; below that bar, "just pay per
@@ -157,17 +160,23 @@ one top-up, one settle/close). The remaining gap to a production deployment is
 swapping the JSON files for a real datastore (Redis/Postgres) behind the same
 interfaces — the seam is already there.
 
+An **x402 HTTP profile** is also implemented (`x402.py`, `examples/x402_demo.py`):
+the same cumulative claims behind `402 Payment Required`, so the channel pays for
+request/response traffic too, interoperating with the convention forming around
+agent payments.
+
 ## Where it goes next
 
-1. **Production-grade persistence**: back `ClaimStore` with Redis/Postgres and
-   add a watchtower for unilateral channel closes.
-2. **RLUSD / IOU denomination** so prices are stable in USD terms.
-3. **A facilitator** that brokers (agent ↔ provider) channels and handles
+1. **Production-grade persistence**: back `ClaimStore` with Redis/Postgres
+   instead of the JSON `FileClaimStore` (the interface seam is already there).
+2. **A watchtower** for unilateral-close protection — with a non-trivial
+   `settle_delay`, a source can request closure, so the provider needs something
+   watching for it that auto-settles the held claim before the channel expires.
+3. **RLUSD / IOU denomination** so prices are stable in USD terms (the volatility
+   gap above), which needs an exchange-rate layer over the XRP-only channel.
+4. **A facilitator** that brokers (agent ↔ provider) channels and handles
    discovery, so an agent doesn't manage channels by hand.
-4. **Watchtower** for unilateral-close protection.
-5. **An x402-style HTTP profile** — expose the same gate behind `402 Payment
-   Required` semantics so it interops with the agent-payments tooling forming
-   around that standard, with XRPL channels as the settlement layer underneath.
 
 The point of v1 is to prove the core loop end-to-end on a real ledger: two
-on-ledger transactions, everything else signatures. That part works today.
+on-ledger transactions, everything else signatures. That part works today —
+across streaming, reused channels, restarts, and HTTP.
