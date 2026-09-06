@@ -29,8 +29,8 @@ llm = ["anthropic>=0.40"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "anyio>=4"]
 
 [project.urls]
-Homepage = "https://github.com/your-org/xrpl-stream-pay"
-Documentation = "https://github.com/your-org/xrpl-stream-pay/blob/main/docs/architecture.md"
+Homepage = "https://github.com/ricky122-5/xrpl-stream-pay"
+Documentation = "https://github.com/ricky122-5/xrpl-stream-pay/blob/main/docs/architecture.md"
 
 [project.scripts]
 xrpl-stream-pay = "xrpl_stream_pay.__main__:main"
@@ -41,7 +41,9 @@ packages = ["src/xrpl_stream_pay"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-ra"
+# Skip the networked testnet tests by default so a plain `pytest` is fast and
+# offline; opt in with `pytest -m testnet` (a command-line -m overrides this).
+addopts = "-ra -m 'not testnet'"
 markers = [
     "testnet: integration tests that hit the live XRPL testnet (slow, networked; opt in with -m testnet)",
 ]

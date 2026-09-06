@@ -104,10 +104,14 @@ a cut.
 
 ### The case for XRPL
 
-- **Payment channels are a native, first-class ledger primitive.** `PayChannel`
-  objects and claim verification are part of the protocol. On Solana or Base you
-  would deploy and audit a custom state-channel program/contract — more code,
-  more attack surface, more to get wrong. Here the channel *is* the chain.
+- **Payment channels are a native, years-tested ledger primitive.** `PayChannel`
+  objects and claim verification are transaction types in the XRPL protocol
+  itself and have been live for years. Solana shipped its own AI-agent payment
+  channels on 2026-09-04 — days before this was written — using the same
+  lock-transact-off-base-settle-net pattern, but as brand-new infrastructure;
+  Base would still need a custom contract. The XRPL version is the oldest and
+  most conservative: the channel *is* the ledger, and the claim format is fixed
+  by the protocol.
 - **Fees are tiny, fixed, and predictable** (~10 drops), with no gas auctions or
   priority fees to reason about. The two bookend transactions cost a rounding
   error, and there is *zero* fee in the per-token loop.
@@ -122,18 +126,25 @@ a cut.
   **RLUSD** (Ripple's USD stablecoin) or an IOU once channel support for issued
   currencies fits the use case; this v1 prices in drops for simplicity. This is
   the single biggest gap versus a USDC-on-Base design.
-- **Base / Solana have the ecosystem and the emerging standard.** The **x402**
-  pattern (HTTP `402 Payment Required` + a stablecoin micro-payment per request,
-  championed on Base) is gaining real traction for agent payments, with wallets,
-  facilitators, and tooling. It's *per-request*, not *per-token*, so it's
-  complementary rather than identical — but it's where the mindshare is. We meet
-  it halfway: `x402.py` is an x402 *profile* whose payment instrument is a channel
-  claim (see `examples/x402_demo.py`), so the same channel pays for streaming
-  *and* per-request HTTP, and 8 paid requests still cost 2 on-ledger transactions.
-- **Solana is cheap and fast enough that per-request on-chain is viable** for
-  many workloads, sidestepping channels entirely. Channels win specifically when
-  per-token granularity matters and volume is high; below that bar, "just pay per
-  request" is simpler.
+- **Base / Solana have the ecosystem and the standard.** The **x402** pattern
+  (HTTP `402 Payment Required` + a stablecoin micro-payment per request) started
+  on Base and is now a **Linux Foundation** standard (the x402 Foundation, with
+  Visa and Stripe among the backers) running heavily on Solana with USDC
+  settlement. It's *per-request*, not *per-token*, so it's complementary rather
+  than identical — but it's where the mindshare is. We meet it halfway: `x402.py`
+  is an x402 *profile* whose payment instrument is a channel claim (see
+  `examples/x402_demo.py`), so the same channel pays for streaming *and*
+  per-request HTTP, and 8 paid requests still cost 2 on-ledger transactions.
+- **Solana now ships this exact idea — and more of it.** As of 2026-09-04 Solana
+  has payment channels for AI agents (authorize a cap once, settle the net in one
+  transaction — the same design as this), alongside x402-on-Solana, USDC
+  settlement, and headline throughput claims in the millions of payments/sec.
+  That is a more ecosystem-complete, stablecoin-denominated version of what's
+  here, with real backing and volume. Honestly: if you want mindshare, tooling,
+  and stable USD pricing *today*, that's the pragmatic choice. XRPL's edge is a
+  protocol-native, years-tested channel primitive with fixed sub-cent fees and
+  deterministic finality — a simpler, more conservative settlement layer — not a
+  bigger ecosystem.
 - **Capital lockup.** A channel ties up XRP for its lifetime plus the
   `settle_delay` window, and each channel costs an owner reserve. That's fine for
   a busy long-lived channel, wasteful for a one-shot call.

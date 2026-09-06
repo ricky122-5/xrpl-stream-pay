@@ -6,7 +6,10 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from xrpl.wallet import Wallet
+
 from xrpl_stream_pay import ChannelPaywall, MemoryClaimStore, X402Client
+from xrpl_stream_pay.channel import ChannelState
 from xrpl_stream_pay.claims import Claim, authorize_claim
 from xrpl_stream_pay.errors import BudgetExceeded
 from xrpl_stream_pay.x402 import (
@@ -103,6 +106,56 @@ def test_budget_cap_blocks_request(app, fake_channel, wallet):
     assert client.get("/quote").status_code == 200  # first request fits the budget
     with pytest.raises(BudgetExceeded):
         client.get("/quote")  # second would need 2x the price
+
+
+def test_attacker_key_on_known_channel_is_rejected(monkeypatch, wallet):
+    """Regression: with on-ledger verification, a claim signed by a different key
+    on a publicly-known channel id must be rejected on EVERY request — not just
+    served because the channel was validated once for the honest payer."""
+    victim = wallet
+    attacker = Wallet.create()
+    provider_addr = "rPROVIDERxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    channel_id = "AB" * 32
+
+    # The channel's real, on-ledger key is the victim's.
+    def fake_lookup(cid, network=None, client=None):
+        return ChannelState(
+            channel_id=cid,
+            source="rSOURCExxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            destination=provider_addr,
+            public_key=victim.public_key,
+            amount_drops=10**9,
+            balance_drops=0,
+        )
+
+    monkeypatch.setattr("xrpl_stream_pay.x402.lookup_channel", fake_lookup)
+    paywall = ChannelPaywall(
+        provider_address=provider_addr, claim_store=MemoryClaimStore(), verify_on_chain=True
+    )
+    application = FastAPI()
+    add_paid_route(application, paywall, "/quote", PRICE, lambda r: {"ok": True})
+    http = TestClient(application)
+
+    def pay(w, amount):
+        claim = authorize_claim(channel_id, amount, w.private_key, w.public_key)
+        return http.get(
+            "/quote",
+            headers={CHANNEL_HEADER: channel_id, PAYMENT_HEADER: encode_payment(claim)},
+        )
+
+    # 1. Honest payer is served, and validates the channel on-ledger.
+    assert pay(victim, PRICE).status_code == 200
+    assert paywall.baseline(channel_id) == PRICE
+
+    # 2. Attacker signs with their OWN key on the same channel -> must be 402.
+    assert pay(attacker, PRICE * 5).status_code == 402
+    # Store not poisoned: baseline unchanged, still the victim's amount.
+    assert paywall.baseline(channel_id) == PRICE
+    assert paywall.claim_store.get(channel_id).public_key == victim.public_key
+
+    # 3. Honest payer's next request still works (not locked out).
+    assert pay(victim, PRICE * 2).status_code == 200
+    assert paywall.baseline(channel_id) == PRICE * 2
 
 
 def test_resync_to_server_baseline(app, paywall, fake_channel, wallet):

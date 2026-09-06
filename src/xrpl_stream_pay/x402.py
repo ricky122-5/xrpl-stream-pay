@@ -117,8 +117,11 @@ class ChannelPaywall:
         self.network = network
         self.claim_store = claim_store if claim_store is not None else MemoryClaimStore()
         self.verify_on_chain = verify_on_chain
-        # channel_id -> capacity_drops, populated on first (validated) sighting.
-        self._verified: dict[str, int] = {}
+        # channel_id -> (real on-ledger public key (upper), capacity_drops), cached
+        # after the first on-ledger lookup. We keep the *real* key so every later
+        # charge re-checks the claim's key against it — caching on channel_id
+        # alone would let anyone sign with their own key on a known channel id.
+        self._channels: dict[str, tuple[str, int]] = {}
 
     def baseline(self, channel_id: str) -> int:
         """Cumulative drops already authorized on a channel."""
@@ -148,12 +151,22 @@ class ChannelPaywall:
         }
 
     async def _capacity(self, channel_id: str, public_key: str) -> int:
-        """Validate (once) that the channel pays us with this key; return capacity."""
-        if channel_id in self._verified:
-            return self._verified[channel_id]
+        """Confirm ``public_key`` is the channel's real key; return its capacity.
+
+        The key is re-checked on *every* charge, not just the first: we look the
+        channel up on-ledger once and cache its real public key, then compare the
+        presented key against that cached value on every subsequent request. That
+        closes the hole where caching on ``channel_id`` alone would let anyone
+        present a claim signed with their own key on a publicly-known channel id.
+        """
         if not self.verify_on_chain:
-            self._verified[channel_id] = 2**63 - 1
-            return self._verified[channel_id]
+            return 2**63 - 1
+        cached = self._channels.get(channel_id)
+        if cached is not None:
+            real_key, capacity = cached
+            if public_key.upper() != real_key:
+                raise PaymentError("channel public key does not match the claim")
+            return capacity
         try:
             state = await asyncio.to_thread(
                 lookup_channel, channel_id, network=self.network
@@ -164,7 +177,7 @@ class ChannelPaywall:
             raise PaymentError("channel does not pay this provider")
         if state.public_key.upper() != public_key.upper():
             raise PaymentError("channel public key does not match the claim")
-        self._verified[channel_id] = state.amount_drops
+        self._channels[channel_id] = (state.public_key.upper(), state.amount_drops)
         return state.amount_drops
 
     async def charge(
@@ -197,7 +210,7 @@ class ChannelPaywall:
             claim = decode_payment(payment)
             if not verify_claim(claim):
                 raise PaymentError("claim signature is invalid")
-            if claim.public_key != "" and channel_hint and claim.channel_id != channel_hint:
+            if channel_hint and claim.channel_id != channel_hint:
                 raise PaymentError("claim channel does not match X-Payment-Channel")
             capacity = await self._capacity(claim.channel_id, claim.public_key)
             required = self.baseline(claim.channel_id) + price_drops
